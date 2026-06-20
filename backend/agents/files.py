@@ -1,0 +1,131 @@
+import os
+from fastapi import APIRouter
+from pydantic import BaseModel
+import anthropic
+from db.database import get_config, get_conn
+
+router = APIRouter(prefix="/files")
+
+
+class AnalyzeRequest(BaseModel):
+    path: str
+    content: str
+    project_id: str | None = None
+
+
+def get_client() -> anthropic.Anthropic:
+    key = get_config("anthropic_api_key")
+    if not key:
+        raise ValueError("API key not set")
+    return anthropic.Anthropic(api_key=key)
+
+
+def get_project_ctx(project_id: str | None) -> str:
+    if not project_id:
+        return ""
+    conn = get_conn()
+    p = conn.execute("SELECT name, problem_statement, domain FROM projects WHERE id = ?", (project_id,)).fetchone()
+    conn.close()
+    return f"Project: {p['name']}\nProblem: {p['problem_statement']}" if p else ""
+
+
+@router.post("/analyze")
+async def analyze_file(req: AnalyzeRequest):
+    try:
+        client = get_client()
+    except ValueError as e:
+        return {"error": str(e)}
+
+    ext = os.path.splitext(req.path)[1].lower()
+    file_type_hint = {
+        ".py": "Python source code",
+        ".ts": "TypeScript source code",
+        ".tsx": "TypeScript React component",
+        ".js": "JavaScript",
+        ".md": "Markdown document",
+        ".txt": "Text document",
+        ".csv": "CSV data file",
+        ".json": "JSON data",
+    }.get(ext, "file")
+
+    project_ctx = get_project_ctx(req.project_id)
+
+    prompt = f"""You are ARIA analyzing a {file_type_hint} in the context of the user's project.
+{project_ctx}
+
+File: {req.path.split(os.sep)[-1]}
+Content:
+```
+{req.content[:6000]}
+```
+
+Provide a concise analysis covering:
+1. **What this file does** (1-2 sentences)
+2. **Relevance to the project** — how does it contribute?
+3. **Quality & completeness** — is it well-structured? What's missing?
+4. **Suggested next steps** — what should be added or improved?
+5. **Progress indicator** — what % complete does this component seem?
+
+Keep it practical and actionable."""
+
+    try:
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return {"analysis": msg.content[0].text}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.post("/write-report")
+async def write_progress_report(body: dict):
+    """Generate a weekly progress report and write it to the project folder."""
+    project_id = body.get("project_id")
+    output_path = body.get("output_path")
+
+    if not project_id or not output_path:
+        return {"error": "project_id and output_path required"}
+
+    conn = get_conn()
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    tasks = conn.execute("SELECT * FROM tasks WHERE project_id = ?", (project_id,)).fetchall()
+    conn.close()
+
+    if not project:
+        return {"error": "Project not found"}
+
+    done = [t for t in tasks if t["status"] == "done"]
+    in_progress = [t for t in tasks if t["status"] == "in_progress"]
+    blocked = [t for t in tasks if t["status"] == "blocked"]
+
+    try:
+        client = get_client()
+        report_prompt = f"""Generate a concise weekly progress report for this project in Markdown format.
+
+Project: {project['name']}
+Problem: {project['problem_statement']}
+Overall Progress: {project['overall_progress']}%
+
+Tasks Done ({len(done)}): {', '.join(t['title'] for t in done[:5])}
+In Progress ({len(in_progress)}): {', '.join(t['title'] for t in in_progress[:5])}
+Blocked ({len(blocked)}): {', '.join(t['title'] for t in blocked[:3])}
+
+Include: Executive summary, achievements, blockers & solutions, next week priorities, risk assessment."""
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": report_prompt}]
+        )
+        report = msg.content[0].text
+
+        # Write to file
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        return {"success": True, "path": output_path, "preview": report[:300]}
+    except Exception as e:
+        return {"error": str(e)}

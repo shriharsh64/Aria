@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+release/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+backend/db/aria.db
+backend/.env
+
+# Env / secrets
+.env
+.env.*
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# electron-builder cache
+.cache/
