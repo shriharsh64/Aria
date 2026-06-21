@@ -1,10 +1,12 @@
 import os
+import google.generativeai as genai
 from fastapi import APIRouter
 from pydantic import BaseModel
-import anthropic
 from db.database import get_config, get_conn
 
 router = APIRouter(prefix="/files")
+
+MAIN_MODEL = "gemini-2.0-flash"
 
 
 class AnalyzeRequest(BaseModel):
@@ -13,11 +15,11 @@ class AnalyzeRequest(BaseModel):
     project_id: str | None = None
 
 
-def get_client() -> anthropic.Anthropic:
-    key = get_config("anthropic_api_key")
+def configure_genai():
+    key = get_config("google_api_key")
     if not key:
-        raise ValueError("API key not set")
-    return anthropic.Anthropic(api_key=key)
+        raise ValueError("Google API key not set")
+    genai.configure(api_key=key)
 
 
 def get_project_ctx(project_id: str | None) -> str:
@@ -32,7 +34,7 @@ def get_project_ctx(project_id: str | None) -> str:
 @router.post("/analyze")
 async def analyze_file(req: AnalyzeRequest):
     try:
-        client = get_client()
+        configure_genai()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -49,11 +51,12 @@ async def analyze_file(req: AnalyzeRequest):
     }.get(ext, "file")
 
     project_ctx = get_project_ctx(req.project_id)
+    file_name = req.path.replace("\\", "/").split("/")[-1]
 
     prompt = f"""You are ARIA analyzing a {file_type_hint} in the context of the user's project.
 {project_ctx}
 
-File: {req.path.split(os.sep)[-1]}
+File: {file_name}
 Content:
 ```
 {req.content[:6000]}
@@ -69,19 +72,15 @@ Provide a concise analysis covering:
 Keep it practical and actionable."""
 
     try:
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return {"analysis": msg.content[0].text}
+        model = genai.GenerativeModel(MAIN_MODEL)
+        response = model.generate_content(prompt)
+        return {"analysis": response.text}
     except Exception as e:
         return {"error": str(e)}
 
 
 @router.post("/write-report")
 async def write_progress_report(body: dict):
-    """Generate a weekly progress report and write it to the project folder."""
     project_id = body.get("project_id")
     output_path = body.get("output_path")
 
@@ -101,7 +100,7 @@ async def write_progress_report(body: dict):
     blocked = [t for t in tasks if t["status"] == "blocked"]
 
     try:
-        client = get_client()
+        configure_genai()
         report_prompt = f"""Generate a concise weekly progress report for this project in Markdown format.
 
 Project: {project['name']}
@@ -114,14 +113,10 @@ Blocked ({len(blocked)}): {', '.join(t['title'] for t in blocked[:3])}
 
 Include: Executive summary, achievements, blockers & solutions, next week priorities, risk assessment."""
 
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1500,
-            messages=[{"role": "user", "content": report_prompt}]
-        )
-        report = msg.content[0].text
+        model = genai.GenerativeModel(MAIN_MODEL)
+        response = model.generate_content(report_prompt)
+        report = response.text
 
-        # Write to file
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(report)

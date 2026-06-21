@@ -19,8 +19,8 @@ export default function SetupModal(): React.JSX.Element {
   const [loading, setLoading] = useState(false)
 
   const handleApiKey = async (): Promise<void> => {
-    if (!apiKey.trim().startsWith('sk-ant-')) {
-      setError('Key should start with sk-ant-')
+    if (!apiKey.trim().startsWith('AIza')) {
+      setError('Key should start with AIza')
       return
     }
     setError('')
@@ -68,13 +68,13 @@ export default function SetupModal(): React.JSX.Element {
         {(step === 'apikey') && (
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-aria-text block mb-1.5">Anthropic API Key</label>
+              <label className="text-sm font-medium text-aria-text block mb-1.5">Google API Key</label>
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleApiKey()}
-                placeholder="sk-ant-api03-..."
+                placeholder="AIzaSy..."
                 className="w-full bg-aria-surface border border-aria-border rounded-lg px-3 py-2.5 text-sm text-aria-text placeholder-aria-muted focus:outline-none focus:border-aria-accent transition-colors font-mono"
               />
               <p className="text-xs text-aria-muted mt-1.5">Stored locally only. Never leaves your machine.</p>

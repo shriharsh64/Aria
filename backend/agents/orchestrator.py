@@ -1,10 +1,12 @@
-import json
+import google.generativeai as genai
 from fastapi import APIRouter
 from pydantic import BaseModel
-import anthropic
 from db.database import get_config, get_conn
 
 router = APIRouter()
+
+MAIN_MODEL = "gemini-2.0-flash"
+FAST_MODEL = "gemini-2.0-flash"
 
 AGENT_SYSTEM_PROMPTS = {
     "auto": """You are ARIA, an expert AI project co-pilot. You help users with every aspect of their project:
@@ -17,7 +19,7 @@ problem statements. Use Socratic questioning to clarify vague ideas. Ensure prob
 achievable, relevant, and time-bound. Output structured problem definitions with success criteria.""",
 
     "ideation": """You are ARIA's Ideation Agent. Generate creative, diverse solution ideas using structured techniques
-(SCAMPER, TRIZ principles, analogical reasoning, first-principles thinking). Rank ideas by feasibility × impact.
+(SCAMPER, TRIZ principles, analogical reasoning, first-principles thinking). Rank ideas by feasibility x impact.
 Connect ideas to existing open-source solutions, APIs, and research. Be creative but practical.""",
 
     "planning": """You are ARIA's Planning Agent. Create detailed, dependency-aware task breakdowns, phased roadmaps,
@@ -60,11 +62,11 @@ class ChatRequest(BaseModel):
     attachment_path: str | None = None
 
 
-def get_client() -> anthropic.Anthropic:
-    key = get_config("anthropic_api_key")
+def configure_genai():
+    key = get_config("google_api_key")
     if not key:
-        raise ValueError("API key not set. Please configure your Anthropic API key.")
-    return anthropic.Anthropic(api_key=key)
+        raise ValueError("Google API key not set. Please configure your API key.")
+    genai.configure(api_key=key)
 
 
 def get_project_context(project_id: str | None) -> str:
@@ -100,64 +102,67 @@ Current Tasks:
 """
 
 
-def route_agent(message: str, client: anthropic.Anthropic) -> str:
-    """Auto-route to the best agent based on message content."""
-    routing_msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=20,
-        messages=[{"role": "user", "content": AGENT_ROUTING_PROMPT.format(message=message)}]
-    )
-    agent = routing_msg.content[0].text.strip().lower()
-    return agent if agent in AGENT_SYSTEM_PROMPTS else "auto"
+def route_agent(message: str) -> str:
+    try:
+        model = genai.GenerativeModel(FAST_MODEL)
+        response = model.generate_content(AGENT_ROUTING_PROMPT.format(message=message))
+        agent = response.text.strip().lower()
+        return agent if agent in AGENT_SYSTEM_PROMPTS else "auto"
+    except Exception:
+        return "auto"
 
 
 def read_attachment(path: str) -> str:
-    """Read a text/markdown/code file for context."""
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(8000)
-        return f"\n\n[Attached file: {path.split('/')[-1].split(chr(92))[-1]}]\n{content}"
+        name = path.replace("\\", "/").split("/")[-1]
+        return f"\n\n[Attached file: {name}]\n{content}"
     except Exception:
         return ""
+
+
+def build_gemini_history(history: list[dict]) -> list[dict]:
+    """Convert OpenAI-style history to Gemini format."""
+    gemini_history = []
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg["content"]]})
+    return gemini_history
 
 
 @router.post("/chat")
 async def chat(req: ChatRequest):
     try:
-        client = get_client()
+        configure_genai()
     except ValueError as e:
         return {"error": str(e)}
 
-    # Determine which agent to use
     agent_mode = req.agent_mode
     if agent_mode == "auto":
-        agent_mode = route_agent(req.message, client)
+        agent_mode = route_agent(req.message)
 
     system = AGENT_SYSTEM_PROMPTS.get(agent_mode, AGENT_SYSTEM_PROMPTS["auto"])
     project_ctx = get_project_context(req.project_id)
     if project_ctx:
         system += f"\n{project_ctx}"
 
-    # Build messages
-    messages = list(req.history)
-
     user_content = req.message
     if req.attachment_path:
         user_content += read_attachment(req.attachment_path)
 
-    messages.append({"role": "user", "content": user_content})
-
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=system,
-            messages=messages
-        )
+        model = genai.GenerativeModel(MAIN_MODEL, system_instruction=system)
+
+        # Build history excluding the last user message
+        history = build_gemini_history(req.history)
+
+        chat_session = model.start_chat(history=history)
+        response = chat_session.send_message(user_content)
+
         return {
-            "response": response.content[0].text,
+            "response": response.text,
             "agent_used": agent_mode,
-            "tokens": response.usage.output_tokens
         }
     except Exception as e:
         return {"error": f"Agent error: {e}"}

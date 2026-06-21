@@ -3,26 +3,12 @@ import uuid
 from datetime import datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
-import anthropic
+import google.generativeai as genai
 from db.database import get_config, get_conn
 
 router = APIRouter(prefix="/project")
 
-
-class ProjectInitRequest(BaseModel):
-    name: str
-    idea: str
-    domain: str = ""
-    deadline: str = ""
-    team_size: int = 1
-
-
-def get_client() -> anthropic.Anthropic:
-    key = get_config("anthropic_api_key")
-    if not key:
-        raise ValueError("API key not set")
-    return anthropic.Anthropic(api_key=key)
-
+MAIN_MODEL = "gemini-2.0-flash"
 
 PROJECT_INIT_PROMPT = """You are ARIA, an expert project management AI. A user has described their project idea.
 Your job is to:
@@ -63,10 +49,25 @@ Today: {today}
 """
 
 
+class ProjectInitRequest(BaseModel):
+    name: str
+    idea: str
+    domain: str = ""
+    deadline: str = ""
+    team_size: int = 1
+
+
+def configure_genai():
+    key = get_config("google_api_key")
+    if not key:
+        raise ValueError("Google API key not set")
+    genai.configure(api_key=key)
+
+
 @router.post("/init")
 async def init_project(req: ProjectInitRequest):
     try:
-        client = get_client()
+        configure_genai()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -80,13 +81,9 @@ async def init_project(req: ProjectInitRequest):
     )
 
     try:
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = msg.content[0].text.strip()
-        # Strip markdown code fences if present
+        model = genai.GenerativeModel(MAIN_MODEL)
+        response = model.generate_content(prompt)
+        raw = response.text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

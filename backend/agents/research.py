@@ -1,12 +1,13 @@
 import httpx
+import google.generativeai as genai
 from fastapi import APIRouter
 from pydantic import BaseModel
-import anthropic
 from db.database import get_config
 
 router = APIRouter(prefix="/research")
 
 USPTO_BASE = "https://api.patentsview.org/patents/query"
+FAST_MODEL = "gemini-2.0-flash"
 
 
 class PatentSearchRequest(BaseModel):
@@ -15,15 +16,14 @@ class PatentSearchRequest(BaseModel):
     max_results: int = 10
 
 
-def get_client() -> anthropic.Anthropic:
-    key = get_config("anthropic_api_key")
+def configure_genai():
+    key = get_config("google_api_key")
     if not key:
-        raise ValueError("API key not set")
-    return anthropic.Anthropic(api_key=key)
+        raise ValueError("Google API key not set")
+    genai.configure(api_key=key)
 
 
 async def search_uspto(query: str, limit: int = 10) -> list[dict]:
-    """Search USPTO PatentsView API."""
     payload = {
         "q": {"_text_any": {"patent_abstract": query}},
         "f": ["patent_number", "patent_title", "patent_abstract", "assignee_organization", "patent_date"],
@@ -50,7 +50,6 @@ async def search_uspto(query: str, limit: int = 10) -> list[dict]:
 
 
 def score_similarity(patent_abstract: str, query: str) -> float:
-    """Simple keyword overlap score."""
     query_words = set(query.lower().split())
     abstract_words = set(patent_abstract.lower().split())
     overlap = query_words & abstract_words
@@ -61,28 +60,23 @@ def score_similarity(patent_abstract: str, query: str) -> float:
 async def patent_search(req: PatentSearchRequest):
     results = await search_uspto(req.query, req.max_results)
 
-    # Score similarity
     for r in results:
         if "error" not in r:
             r["similarity_score"] = score_similarity(r.get("abstract", ""), req.query)
 
     results.sort(key=lambda r: r.get("similarity_score", 0), reverse=True)
 
-    # Ask ARIA to summarize the IP landscape
     summary = ""
     if results and "error" not in results[0]:
         try:
-            client = get_client()
+            configure_genai()
             patent_text = "\n\n".join(
                 f"Patent #{r['patent_number']}: {r['title']}\n{r['abstract']}"
                 for r in results[:5]
             )
-            msg = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=512,
-                messages=[{
-                    "role": "user",
-                    "content": f"""As ARIA's Patent Agent, analyze these patents in relation to the query: "{req.query}"
+            model = genai.GenerativeModel(FAST_MODEL)
+            response = model.generate_content(
+                f"""As ARIA's Patent Agent, analyze these patents in relation to the query: "{req.query}"
 
 Patents found:
 {patent_text}
@@ -91,9 +85,8 @@ Provide a 3-4 sentence IP landscape summary:
 1. How similar are these patents to the proposed project?
 2. What's the freedom-to-operate risk level (low/medium/high)?
 3. What's a key differentiation angle to avoid conflicts?"""
-                }]
             )
-            summary = msg.content[0].text
+            summary = response.text
         except Exception:
             summary = "Could not generate AI summary."
 

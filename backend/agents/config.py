@@ -11,13 +11,13 @@ class ApiKeyRequest(BaseModel):
 
 @router.post("/apikey")
 async def set_api_key(req: ApiKeyRequest):
-    if not req.key.startswith("sk-ant-"):
-        return {"error": "Invalid Anthropic API key format"}
-    set_config("anthropic_api_key", req.key)
+    if not req.key.startswith("AIza"):
+        return {"error": "Invalid Google API key format (should start with AIza)"}
+    set_config("google_api_key", req.key)
     return {"ok": True}
 
 
 @router.get("/apikey/status")
 async def api_key_status():
-    key = get_config("anthropic_api_key")
+    key = get_config("google_api_key")
     return {"set": bool(key), "prefix": key[:12] + "..." if key else None}
