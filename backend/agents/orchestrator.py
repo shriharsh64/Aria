@@ -5,8 +5,8 @@ from db.database import get_config, get_conn
 
 router = APIRouter()
 
-MAIN_MODEL = "gemini-2.0-flash"
-FAST_MODEL = "gemini-2.0-flash"
+MAIN_MODEL = "gemini-2.5-flash"
+FAST_MODEL = "gemini-2.5-flash"
 
 AGENT_SYSTEM_PROMPTS = {
     "auto": """You are ARIA, an expert AI project co-pilot. You help users with every aspect of their project:

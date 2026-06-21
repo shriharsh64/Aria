@@ -8,7 +8,7 @@ from db.database import get_config, get_conn
 
 router = APIRouter(prefix="/project")
 
-MAIN_MODEL = "gemini-2.0-flash"
+MAIN_MODEL = "gemini-2.5-flash"
 
 PROJECT_INIT_PROMPT = """You are ARIA, an expert project management AI. A user has described their project idea.
 Your job is to:

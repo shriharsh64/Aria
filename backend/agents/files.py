@@ -6,7 +6,7 @@ from db.database import get_config, get_conn
 
 router = APIRouter(prefix="/files")
 
-MAIN_MODEL = "gemini-2.0-flash"
+MAIN_MODEL = "gemini-2.5-flash"
 
 
 class AnalyzeRequest(BaseModel):

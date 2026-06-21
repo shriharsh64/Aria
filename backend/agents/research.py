@@ -7,7 +7,7 @@ from db.database import get_config
 router = APIRouter(prefix="/research")
 
 USPTO_BASE = "https://api.patentsview.org/patents/query"
-FAST_MODEL = "gemini-2.0-flash"
+FAST_MODEL = "gemini-2.5-flash"
 
 
 class PatentSearchRequest(BaseModel):
