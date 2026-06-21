@@ -1,5 +1,5 @@
 import httpx
-import google.generativeai as genai
+from google import genai
 from fastapi import APIRouter
 from pydantic import BaseModel
 from db.database import get_config
@@ -7,7 +7,7 @@ from db.database import get_config
 router = APIRouter(prefix="/research")
 
 USPTO_BASE = "https://api.patentsview.org/patents/query"
-FAST_MODEL = "gemini-2.5-flash"
+FAST_MODEL = "gemini-3.1-flash-lite"
 
 
 class PatentSearchRequest(BaseModel):
@@ -16,11 +16,11 @@ class PatentSearchRequest(BaseModel):
     max_results: int = 10
 
 
-def configure_genai():
+def get_client() -> genai.Client:
     key = get_config("google_api_key")
     if not key:
         raise ValueError("Google API key not set")
-    genai.configure(api_key=key)
+    return genai.Client(api_key=key)
 
 
 async def search_uspto(query: str, limit: int = 10) -> list[dict]:
@@ -69,14 +69,14 @@ async def patent_search(req: PatentSearchRequest):
     summary = ""
     if results and "error" not in results[0]:
         try:
-            configure_genai()
+            client = get_client()
             patent_text = "\n\n".join(
                 f"Patent #{r['patent_number']}: {r['title']}\n{r['abstract']}"
                 for r in results[:5]
             )
-            model = genai.GenerativeModel(FAST_MODEL)
-            response = model.generate_content(
-                f"""As ARIA's Patent Agent, analyze these patents in relation to the query: "{req.query}"
+            response = client.models.generate_content(
+                model=FAST_MODEL,
+                contents=f"""As ARIA's Patent Agent, analyze these patents in relation to the query: "{req.query}"
 
 Patents found:
 {patent_text}

@@ -1,12 +1,13 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from fastapi import APIRouter
 from pydantic import BaseModel
 from db.database import get_config, get_conn
 
 router = APIRouter()
 
-MAIN_MODEL = "gemini-2.5-flash"
-FAST_MODEL = "gemini-2.5-flash"
+MAIN_MODEL = "gemini-3.1-flash-lite"
+FAST_MODEL = "gemini-3.1-flash-lite"
 
 AGENT_SYSTEM_PROMPTS = {
     "auto": """You are ARIA, an expert AI project co-pilot. You help users with every aspect of their project:
@@ -62,11 +63,11 @@ class ChatRequest(BaseModel):
     attachment_path: str | None = None
 
 
-def configure_genai():
+def get_client() -> genai.Client:
     key = get_config("google_api_key")
     if not key:
         raise ValueError("Google API key not set. Please configure your API key.")
-    genai.configure(api_key=key)
+    return genai.Client(api_key=key)
 
 
 def get_project_context(project_id: str | None) -> str:
@@ -104,8 +105,11 @@ Current Tasks:
 
 def route_agent(message: str) -> str:
     try:
-        model = genai.GenerativeModel(FAST_MODEL)
-        response = model.generate_content(AGENT_ROUTING_PROMPT.format(message=message))
+        client = get_client()
+        response = client.models.generate_content(
+            model=FAST_MODEL,
+            contents=AGENT_ROUTING_PROMPT.format(message=message)
+        )
         agent = response.text.strip().lower()
         return agent if agent in AGENT_SYSTEM_PROMPTS else "auto"
     except Exception:
@@ -122,19 +126,18 @@ def read_attachment(path: str) -> str:
         return ""
 
 
-def build_gemini_history(history: list[dict]) -> list[dict]:
-    """Convert OpenAI-style history to Gemini format."""
-    gemini_history = []
+def build_history(history: list[dict]) -> list[dict]:
+    result = []
     for msg in history:
         role = "user" if msg["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [msg["content"]]})
-    return gemini_history
+        result.append({"role": role, "parts": [{"text": msg["content"]}]})
+    return result
 
 
 @router.post("/chat")
 async def chat(req: ChatRequest):
     try:
-        configure_genai()
+        client = get_client()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -152,14 +155,13 @@ async def chat(req: ChatRequest):
         user_content += read_attachment(req.attachment_path)
 
     try:
-        model = genai.GenerativeModel(MAIN_MODEL, system_instruction=system)
-
-        # Build history excluding the last user message
-        history = build_gemini_history(req.history)
-
-        chat_session = model.start_chat(history=history)
+        history = build_history(req.history)
+        chat_session = client.chats.create(
+            model=MAIN_MODEL,
+            config=types.GenerateContentConfig(system_instruction=system),
+            history=history
+        )
         response = chat_session.send_message(user_content)
-
         return {
             "response": response.text,
             "agent_used": agent_mode,

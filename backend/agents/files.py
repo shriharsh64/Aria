@@ -1,12 +1,12 @@
 import os
-import google.generativeai as genai
+from google import genai
 from fastapi import APIRouter
 from pydantic import BaseModel
 from db.database import get_config, get_conn
 
 router = APIRouter(prefix="/files")
 
-MAIN_MODEL = "gemini-2.5-flash"
+MAIN_MODEL = "gemini-3.1-flash-lite"
 
 
 class AnalyzeRequest(BaseModel):
@@ -15,11 +15,11 @@ class AnalyzeRequest(BaseModel):
     project_id: str | None = None
 
 
-def configure_genai():
+def get_client() -> genai.Client:
     key = get_config("google_api_key")
     if not key:
         raise ValueError("Google API key not set")
-    genai.configure(api_key=key)
+    return genai.Client(api_key=key)
 
 
 def get_project_ctx(project_id: str | None) -> str:
@@ -34,7 +34,7 @@ def get_project_ctx(project_id: str | None) -> str:
 @router.post("/analyze")
 async def analyze_file(req: AnalyzeRequest):
     try:
-        configure_genai()
+        client = get_client()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -72,8 +72,7 @@ Provide a concise analysis covering:
 Keep it practical and actionable."""
 
     try:
-        model = genai.GenerativeModel(MAIN_MODEL)
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model=MAIN_MODEL, contents=prompt)
         return {"analysis": response.text}
     except Exception as e:
         return {"error": str(e)}
@@ -100,7 +99,7 @@ async def write_progress_report(body: dict):
     blocked = [t for t in tasks if t["status"] == "blocked"]
 
     try:
-        configure_genai()
+        client = get_client()
         report_prompt = f"""Generate a concise weekly progress report for this project in Markdown format.
 
 Project: {project['name']}
@@ -113,8 +112,7 @@ Blocked ({len(blocked)}): {', '.join(t['title'] for t in blocked[:3])}
 
 Include: Executive summary, achievements, blockers & solutions, next week priorities, risk assessment."""
 
-        model = genai.GenerativeModel(MAIN_MODEL)
-        response = model.generate_content(report_prompt)
+        response = client.models.generate_content(model=MAIN_MODEL, contents=report_prompt)
         report = response.text
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)

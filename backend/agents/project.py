@@ -3,12 +3,12 @@ import uuid
 from datetime import datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
-import google.generativeai as genai
+from google import genai
 from db.database import get_config, get_conn
 
 router = APIRouter(prefix="/project")
 
-MAIN_MODEL = "gemini-2.5-flash"
+MAIN_MODEL = "gemini-3.1-flash-lite"
 
 PROJECT_INIT_PROMPT = """You are ARIA, an expert project management AI. A user has described their project idea.
 Your job is to:
@@ -57,17 +57,17 @@ class ProjectInitRequest(BaseModel):
     team_size: int = 1
 
 
-def configure_genai():
+def get_client() -> genai.Client:
     key = get_config("google_api_key")
     if not key:
         raise ValueError("Google API key not set")
-    genai.configure(api_key=key)
+    return genai.Client(api_key=key)
 
 
 @router.post("/init")
 async def init_project(req: ProjectInitRequest):
     try:
-        configure_genai()
+        client = get_client()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -81,8 +81,7 @@ async def init_project(req: ProjectInitRequest):
     )
 
     try:
-        model = genai.GenerativeModel(MAIN_MODEL)
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model=MAIN_MODEL, contents=prompt)
         raw = response.text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
